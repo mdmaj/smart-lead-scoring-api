@@ -29,13 +29,26 @@ public class ScoreAuditService {
                 VALUES (?, ?, CAST(? AS jsonb), CAST(? AS jsonb), ?)
                 """;
 
-        postgresJdbcTemplate.update(
-                sql,
-                leadId,
-                modelName,
-                rawAiResponse,
-                ruleBreakdown,
-                finalScore
-        );
+        try {
+
+            postgresJdbcTemplate.update(
+                    sql,
+                    leadId,
+                    modelName,
+                    rawAiResponse,
+                    ruleBreakdown,
+                    finalScore
+            );
+
+            System.out.println("PostgreSQL audit saved successfully.");
+
+        } catch (Exception e) {
+
+            System.out.println(
+                    "PostgreSQL audit save failed: " + e.getMessage()
+            );
+
+            e.printStackTrace();
+        }
     }
 }

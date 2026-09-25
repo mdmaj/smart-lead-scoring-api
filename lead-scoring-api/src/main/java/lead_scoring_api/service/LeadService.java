@@ -1,14 +1,18 @@
 package lead_scoring_api.service;
 
+
 import lead_scoring_api.dto.AiScoreResponse;
 import lead_scoring_api.dto.LeadRequest;
 import lead_scoring_api.entity.Lead;
+import lead_scoring_api.exception.LeadNotFoundException;
 import lead_scoring_api.repository.LeadRepository;
 
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
-import lead_scoring_api.exception.LeadNotFoundException;
+
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Optional;
 
 @Service
@@ -18,15 +22,17 @@ public class LeadService {
     private final RestClient restClient;
     private final ScoreAuditService scoreAuditService;
     private final HybridScoringService hybridScoringService;
+    
 
     public LeadService(
-            LeadRepository leadRepository,
-            ScoreAuditService scoreAuditService,
-            HybridScoringService hybridScoringService) {
+        LeadRepository leadRepository,
+        ScoreAuditService scoreAuditService,
+        HybridScoringService hybridScoringService) {
 
         this.leadRepository = leadRepository;
         this.scoreAuditService = scoreAuditService;
         this.hybridScoringService = hybridScoringService;
+        
 
         this.restClient = RestClient.builder()
                 .baseUrl("http://localhost:8000")
@@ -102,9 +108,9 @@ public class LeadService {
         }
 
         if (contact != null) {
+
             contact = contact.trim();
 
-            // Normalize email
             if (contact.contains("@")) {
                 contact = contact.toLowerCase();
             }
@@ -151,82 +157,73 @@ public class LeadService {
                             .body(AiScoreResponse.class);
 
             // ----------------------------------------------------
-            // 8. Process AI response
+            // 8. Validate AI response
             // ----------------------------------------------------
 
-            if (aiResponse != null) {
+            if (aiResponse == null
+                    || aiResponse.getScore() == null) {
 
-                // ------------------------------------------------
-                // Calculate rule score
-                // ------------------------------------------------
-
-                double ruleScore =
-                        hybridScoringService
-                                .calculateRuleScore(request);
-
-                System.out.println(
-                        "AI Score: " + aiResponse.getScore()
-                );
-
-                System.out.println(
-                        "Rule Score: " + ruleScore
-                );
-
-                // ------------------------------------------------
-                // Calculate hybrid score
-                // ------------------------------------------------
-
-                double finalScore =
-                        hybridScoringService
-                                .calculateFinalScore(
-                                        aiResponse.getScore(),
-                                        ruleScore
-                                );
-
-                System.out.println(
-                        "Final Hybrid Score: " + finalScore
-                );
-
-                // ------------------------------------------------
-                // Update lead
-                // ------------------------------------------------
-
-                lead.setLatestScore(finalScore);
-
-                lead.setCategory(
-                        getCategoryFromScore(finalScore)
-                );
-
-                lead.setStatus("SCORED");
-                lead.setUpdatedAt(LocalDateTime.now());
-
-                lead = leadRepository.save(lead);
-
-                // ------------------------------------------------
-                // 9. Save audit in PostgreSQL
-                // ------------------------------------------------
-
-                String rawAiResponse = String.format(
-                        "{\"score\":%s,\"category\":\"%s\",\"reason\":\"%s\"}",
-                        aiResponse.getScore(),
-                        aiResponse.getCategory(),
-                        aiResponse.getReason()
-                );
-
-                String ruleBreakdown = String.format(
-                        "{\"ai_score\":%s,\"rule_score\":%s,\"rules_applied\":true}",
-                        aiResponse.getScore(),
-                        ruleScore
-                );
-
-                scoreAuditService.saveAudit(
-                        lead.getId(),
-                        "gemini-3.6-flash",
-                        rawAiResponse,
-                        ruleBreakdown,
-                        finalScore
+                throw new RuntimeException(
+                        "Invalid or empty AI response"
                 );
             }
+
+            // ----------------------------------------------------
+            // 9. Calculate rule score
+            // ----------------------------------------------------
+
+            double ruleScore =
+                    hybridScoringService
+                            .calculateRuleScore(request);
+
+            System.out.println(
+                    "AI Score: " + aiResponse.getScore()
+            );
+
+            System.out.println(
+                    "Rule Score: " + ruleScore
+            );
+
+            // ----------------------------------------------------
+            // 10. Calculate hybrid score
+            // ----------------------------------------------------
+
+            double finalScore =
+                    hybridScoringService
+                            .calculateFinalScore(
+                                    aiResponse.getScore(),
+                                    ruleScore
+                            );
+
+            System.out.println(
+                    "Final Hybrid Score: " + finalScore
+            );
+
+            // ----------------------------------------------------
+            // 11. Update lead as SCORED
+            // ----------------------------------------------------
+
+            lead.setLatestScore(finalScore);
+
+            lead.setCategory(
+                    getCategoryFromScore(finalScore)
+            );
+
+            lead.setStatus("SCORED");
+            lead.setUpdatedAt(LocalDateTime.now());
+
+            lead = leadRepository.save(lead);
+
+            // ----------------------------------------------------
+            // 12. Save PostgreSQL audit separately
+            // ----------------------------------------------------
+
+            saveAuditSafely(
+                    lead,
+                    aiResponse,
+                    ruleScore,
+                    finalScore
+            );
 
         } catch (Exception e) {
 
@@ -246,7 +243,7 @@ public class LeadService {
         }
 
         // --------------------------------------------------------
-        // 10. Return lead
+        // 13. Return lead
         // --------------------------------------------------------
 
         return lead;
@@ -265,10 +262,12 @@ public class LeadService {
         Lead lead =
                 leadRepository.findById(leadId)
                         .orElseThrow(() ->
-        new LeadNotFoundException("Lead not found"));
+                                new LeadNotFoundException(
+                                        "Lead not found"
+                                ));
 
         // --------------------------------------------------------
-        // 2. Convert Lead → LeadRequest
+        // 2. Convert Lead -> LeadRequest
         // --------------------------------------------------------
 
         LeadRequest request = new LeadRequest();
@@ -280,6 +279,7 @@ public class LeadService {
         request.setCompany(lead.getCompany());
 
         // Restore email or phone from contact
+
         if (lead.getContact() != null) {
 
             if (lead.getContact().contains("@")) {
@@ -310,18 +310,19 @@ public class LeadService {
                             .body(AiScoreResponse.class);
 
             // ----------------------------------------------------
-            // Validate AI response
+            // 4. Validate AI response
             // ----------------------------------------------------
 
-            if (aiResponse == null) {
+            if (aiResponse == null
+                    || aiResponse.getScore() == null) {
 
                 throw new RuntimeException(
-                        "Empty AI response"
+                        "Invalid or empty AI response"
                 );
             }
 
             // ----------------------------------------------------
-            // 4. Calculate rule score
+            // 5. Calculate rule score
             // ----------------------------------------------------
 
             double ruleScore =
@@ -329,7 +330,7 @@ public class LeadService {
                             .calculateRuleScore(request);
 
             // ----------------------------------------------------
-            // 5. Calculate hybrid score
+            // 6. Calculate hybrid score
             // ----------------------------------------------------
 
             double finalScore =
@@ -339,8 +340,23 @@ public class LeadService {
                                     ruleScore
                             );
 
+            System.out.println(
+                    "Rescore AI Score: "
+                            + aiResponse.getScore()
+            );
+
+            System.out.println(
+                    "Rescore Rule Score: "
+                            + ruleScore
+            );
+
+            System.out.println(
+                    "Rescore Final Score: "
+                            + finalScore
+            );
+
             // ----------------------------------------------------
-            // 6. Update lead
+            // 7. Update lead
             // ----------------------------------------------------
 
             lead.setLatestScore(finalScore);
@@ -355,27 +371,13 @@ public class LeadService {
             lead = leadRepository.save(lead);
 
             // ----------------------------------------------------
-            // 7. Save PostgreSQL audit
+            // 8. Save PostgreSQL audit separately
             // ----------------------------------------------------
 
-            String rawAiResponse = String.format(
-                    "{\"score\":%s,\"category\":\"%s\",\"reason\":\"%s\"}",
-                    aiResponse.getScore(),
-                    aiResponse.getCategory(),
-                    aiResponse.getReason()
-            );
-
-            String ruleBreakdown = String.format(
-                    "{\"ai_score\":%s,\"rule_score\":%s,\"ai_weight\":70,\"rule_weight\":30}",
-                    aiResponse.getScore(),
-                    ruleScore
-            );
-
-            scoreAuditService.saveAudit(
-                    lead.getId(),
-                    "gemini-3.6-flash",
-                    rawAiResponse,
-                    ruleBreakdown,
+            saveAuditSafely(
+                    lead,
+                    aiResponse,
+                    ruleScore,
                     finalScore
             );
 
@@ -400,7 +402,66 @@ public class LeadService {
     }
 
     // ============================================================
-    // SCORE → CATEGORY
+    // SAVE AUDIT SAFELY
+    // ============================================================
+
+    private void saveAuditSafely(
+        Lead lead,
+        AiScoreResponse aiResponse,
+        double ruleScore,
+        double finalScore) {
+
+    try {
+
+        String rawAiResponse = String.format(
+                "{\"score\":%s,\"category\":\"%s\",\"reason\":\"%s\"}",
+                aiResponse.getScore(),
+                escapeJson(aiResponse.getCategory()),
+                escapeJson(aiResponse.getReason())
+        );
+
+        String ruleBreakdown = String.format(
+                "{\"ai_score\":%s,\"rule_score\":%s,\"final_score\":%s,\"rules_applied\":true}",
+                aiResponse.getScore(),
+                ruleScore,
+                finalScore
+        );
+
+        scoreAuditService.saveAudit(
+                lead.getId(),
+                "gemini-3.6-flash",
+                rawAiResponse,
+                ruleBreakdown,
+                finalScore
+        );
+
+        System.out.println(
+                "PostgreSQL audit saved successfully."
+        );
+
+    } catch (Exception e) {
+
+        System.out.println(
+                "PostgreSQL audit save failed: "
+                        + e.getMessage()
+        );
+    }
+}
+private String escapeJson(String value) {
+
+    if (value == null) {
+        return "";
+    }
+
+    return value
+            .replace("\\", "\\\\")
+            .replace("\"", "\\\"")
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
+            .replace("\t", "\\t");
+}
+    // ============================================================
+    // SCORE -> CATEGORY
     // ============================================================
 
     private String getCategoryFromScore(double score) {
