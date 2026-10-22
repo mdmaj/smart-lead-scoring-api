@@ -93,6 +93,7 @@ Spring Boot
 * Request validation
 * Global exception handling
 * Environment-based secrets
+* 
 
 ---
 
