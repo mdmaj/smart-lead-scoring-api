@@ -214,7 +214,7 @@ CREATE TABLE score_audit (
 );
 ```
 
-The audit database stores the AI response and rule calculation separately from the operational lead database.
+The audit database stores the AI responses and rule calculations separately from the operational lead database.
 
 ---
 
