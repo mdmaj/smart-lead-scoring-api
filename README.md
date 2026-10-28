@@ -316,7 +316,7 @@ http://localhost:8000
 Health check:
 
 ```http
-GET /
+GET //
 ```
 
 ---
@@ -365,7 +365,7 @@ Example request:
 ```json
 {
   "name": "John Doe",
-  "email": "john@example.com",
+  "email": "johndoe@example.com",
   "message": "We urgently need a software solution for our business.",
   "source": "website",
   "budget": 150000,
